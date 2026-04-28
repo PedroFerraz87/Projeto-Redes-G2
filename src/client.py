@@ -1,6 +1,6 @@
 import argparse
 import socket
-from protocol import create_handshake_init, parse_message
+from protocol import create_data_packet, create_handshake_init, parse_message
 from utils import send_message, receive_message
 
 HOST = "127.0.0.1"
@@ -31,13 +31,60 @@ def parse_args():
         metavar="N",
         help="Tamanho máximo do texto (mínimo 30, conforme validação do servidor)",
     )
+    parser.add_argument(
+        "--message",
+        help="Mensagem a ser enviada após o handshake (se omitido, será solicitada no terminal).",
+    )
     return parser.parse_args()
+
+
+def fragment_message(message: str, max_msg_size: int):
+    return [message[i:i + max_msg_size] for i in range(0, len(message), max_msg_size)]
+
+
+def send_with_window(sock, fragments, window_size: int):
+    total = len(fragments)
+    next_seq = 0
+    base = 0
+    acked = set()
+    sock.settimeout(3)
+
+    while base < total:
+        while next_seq < total and next_seq < base + window_size:
+            packet = create_data_packet(next_seq, total, fragments[next_seq])
+            send_message(sock, packet)
+            print(f"Pacote enviado seq={next_seq}")
+            next_seq += 1
+
+        try:
+            raw_ack = receive_message(sock)
+            if not raw_ack:
+                raise ConnectionError("Conexão encerrada durante recebimento de ACK.")
+            ack = parse_message(raw_ack)
+
+            if ack.get("type") != "ack":
+                continue
+
+            ack_seq = ack.get("seq")
+            if isinstance(ack_seq, int):
+                acked.add(ack_seq)
+                print(f"ACK recebido seq={ack_seq}")
+                while base in acked:
+                    base += 1
+        except socket.timeout:
+            print("Timeout aguardando ACK. Reenviando janela atual.")
+            next_seq = base
+    sock.settimeout(None)
 
 
 def main():
     args = parse_args()
     mode = args.mode
     max_msg_size = args.max_msg_size
+    message = args.message or input("Digite a mensagem para enviar: ").strip()
+
+    if not message:
+        raise ValueError("A mensagem não pode ser vazia.")
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
         print(f"Conectando ao servidor {HOST}:{PORT}...")
@@ -56,6 +103,25 @@ def main():
 
         print("Resposta recebida do servidor:")
         print(response)
+
+        if response.get("status") != "ok":
+            print("Servidor recusou handshake. Encerrando cliente.")
+            return
+
+        window_size = response.get("window_size", 1)
+        fragments = fragment_message(message, max_msg_size)
+        print(f"Mensagem fragmentada em {len(fragments)} pacote(s).")
+
+        send_with_window(client_socket, fragments, window_size)
+
+        reconstructed_raw = receive_message(client_socket)
+        reconstructed = parse_message(reconstructed_raw)
+        if reconstructed.get("type") == "message_reconstructed":
+            print("Mensagem final recebida do servidor:")
+            print(reconstructed.get("message"))
+        else:
+            print("Resposta final inesperada do servidor:")
+            print(reconstructed)
 
 
 if __name__ == "__main__":

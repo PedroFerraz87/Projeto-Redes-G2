@@ -7,6 +7,12 @@ Implementação de comunicação cliente–servidor em TCP com handshake inicial
 - Python 3.10 ou superior (recomendado)
 - Nenhuma dependência externa além da biblioteca padrão
 
+## Status atual
+
+✅ Aplicações cliente e servidor conectam via socket  
+✅ Handshake inicial implementado  
+✅ Troca de modo de operação e tamanho máximo
+
 ## Estrutura do projeto
 
 | Caminho | Descrição |
