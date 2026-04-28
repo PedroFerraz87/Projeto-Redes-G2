@@ -42,7 +42,7 @@ def fragment_message(message: str, max_msg_size: int):
     return [message[i:i + max_msg_size] for i in range(0, len(message), max_msg_size)]
 
 
-def send_with_window(sock, fragments, window_size: int):
+def send_with_window(sock, fragments, window_size: int, mode: str):
     total = len(fragments)
     next_seq = 0
     base = 0
@@ -66,14 +66,31 @@ def send_with_window(sock, fragments, window_size: int):
                 continue
 
             ack_seq = ack.get("seq")
-            if isinstance(ack_seq, int):
+            if not isinstance(ack_seq, int):
+                continue
+
+            print(f"ACK recebido seq={ack_seq}")
+
+            if mode == "GBN":
+                if ack_seq >= base:
+                    base = ack_seq + 1
+            else:
                 acked.add(ack_seq)
-                print(f"ACK recebido seq={ack_seq}")
                 while base in acked:
                     base += 1
         except socket.timeout:
-            print("Timeout aguardando ACK. Reenviando janela atual.")
-            next_seq = base
+            if mode == "GBN":
+                print("Timeout (GBN): reenviando todos os pacotes da janela.")
+                next_seq = base
+            else:
+                print("Timeout (SR): reenviando apenas pacotes sem ACK na janela.")
+                window_end = min(base + window_size, total)
+                for seq in range(base, window_end):
+                    if seq in acked:
+                        continue
+                    packet = create_data_packet(seq, total, fragments[seq])
+                    send_message(sock, packet)
+                    print(f"Reenvio SR seq={seq}")
     sock.settimeout(None)
 
 
@@ -112,7 +129,7 @@ def main():
         fragments = fragment_message(message, max_msg_size)
         print(f"Mensagem fragmentada em {len(fragments)} pacote(s).")
 
-        send_with_window(client_socket, fragments, window_size)
+        send_with_window(client_socket, fragments, window_size, mode)
 
         reconstructed_raw = receive_message(client_socket)
         reconstructed = parse_message(reconstructed_raw)

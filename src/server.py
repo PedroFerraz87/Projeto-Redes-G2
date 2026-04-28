@@ -22,6 +22,7 @@ def validate_handshake(data: dict):
 
 def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((HOST, PORT))
         server_socket.listen(1)
 
@@ -62,8 +63,10 @@ def main():
             if not valid:
                 return
 
+            mode = data.get("mode")
             fragments = {}
             total_expected = None
+            expected_seq = 0
 
             while True:
                 raw_packet = receive_message(conn)
@@ -84,11 +87,24 @@ def main():
                     continue
 
                 total_expected = total if total_expected is None else total_expected
-                fragments[seq] = data
 
-                ack = create_ack(seq)
-                send_message(conn, ack)
-                print(f"Pacote seq={seq} recebido e ACK enviado.")
+                if mode == "GBN":
+                    if seq == expected_seq:
+                        fragments[seq] = data
+                        expected_seq += 1
+                        print(f"[GBN] Pacote em ordem seq={seq} recebido.")
+                    else:
+                        print(f"[GBN] Pacote fora de ordem seq={seq} descartado.")
+
+                    ack_seq = expected_seq - 1
+                    ack = create_ack(ack_seq)
+                    send_message(conn, ack)
+                    print(f"[GBN] ACK cumulativo enviado seq={ack_seq}.")
+                else:
+                    fragments[seq] = data
+                    ack = create_ack(seq)
+                    send_message(conn, ack)
+                    print(f"[SR] Pacote seq={seq} recebido e ACK individual enviado.")
 
                 if total_expected is not None and len(fragments) == total_expected:
                     message = "".join(fragments[i] for i in range(total_expected))
