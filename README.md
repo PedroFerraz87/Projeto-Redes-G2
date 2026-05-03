@@ -11,8 +11,8 @@ Implementação de comunicação cliente–servidor em TCP com handshake inicial
 
 | Caminho | Descrição |
 |---------|-----------|
-| `src/server.py` | Servidor TCP que valida o handshake, recebe pacotes, envia ACKs e reconstrói a mensagem |
-| `src/client.py` | Cliente que negocia o handshake, fragmenta a mensagem e envia com janela deslizante |
+| `src/server.py` | Servidor TCP que valida o handshake, recebe pacotes, exibe metadados em tempo real, envia ACKs e reconstrói a mensagem |
+| `src/client.py` | Cliente que negocia o handshake, fragmenta a mensagem em pacotes de até 4 caracteres e envia com janela deslizante |
 | `src/protocol.py` | Definição das mensagens JSON do protocolo (`handshake_init`, `handshake_ack`, `data_packet`, `ack`, `message_reconstructed`) |
 | `src/utils.py` | Envio e recebimento de dados no socket |
 
@@ -34,6 +34,7 @@ O servidor escuta em `127.0.0.1` na porta **5001** e aguarda uma conexão.
 Em outro terminal (com o **servidor já rodando**):
 
 ```bash
+cd src
 python3 client.py --mode GBN --max-msg-size 64
 ```
 
@@ -52,7 +53,7 @@ Se `--message` for omitido, o terminal solicitará a mensagem interativamente.
 | Parâmetro | Obrigatório | Valores | Significado |
 |-----------|-------------|---------|-------------|
 | `--mode` | Sim | `GBN` ou `SR` | `GBN` = Go-Back-N; `SR` = Repetição Seletiva |
-| `--max-msg-size` | Sim | inteiro ≥ **30** | Tamanho máximo de cada fragmento negociado no handshake |
+| `--max-msg-size` | Sim | inteiro ≥ **30** | Tamanho máximo negociado no handshake (não afeta a fragmentação) |
 | `--message` | Não | qualquer texto | Mensagem a ser enviada (se omitido, solicitada no terminal) |
 
 **Outros exemplos**
@@ -73,9 +74,9 @@ python3 client.py --help
 1. O **cliente** conecta ao servidor via TCP.
 2. O **cliente** envia `handshake_init` com `mode` e `max_msg_size`.
 3. O **servidor** valida e responde com `handshake_ack`: `status` (`ok` ou `error`), `window_size` e `message`.
-4. Se o handshake for aceito, o **cliente** fragmenta a mensagem em pacotes do tamanho negociado.
-5. O **cliente** envia os pacotes usando janela deslizante de tamanho `window_size`, respeitando o modo negociado (GBN ou SR).
-6. O **servidor** recebe cada pacote, envia um `ack` individual e armazena o fragmento.
+4. Se o handshake for aceito, o **cliente** fragmenta a mensagem em pacotes de **no máximo 4 caracteres** de carga útil.
+5. O **cliente** envia os pacotes usando janela deslizante de tamanho `window_size`, respeitando o modo negociado (GBN ou SR), exibindo os metadados de cada pacote enviado.
+6. O **servidor** recebe cada pacote, exibe os metadados em tempo real (seq, payload, tamanho, tipo de ACK) e envia ACK ao cliente.
 7. Ao receber todos os fragmentos, o **servidor** reconstrói a mensagem e envia `message_reconstructed` ao cliente.
 8. O **cliente** exibe a mensagem reconstruída recebida do servidor.
 
@@ -85,9 +86,26 @@ python3 client.py --help
 |------|-------------|-----------|
 | `handshake_init` | Cliente | Inicia a negociação com `mode` e `max_msg_size` |
 | `handshake_ack` | Servidor | Confirma ou recusa o handshake com `status`, `window_size` e `message` |
-| `data_packet` | Cliente | Fragmento da mensagem com `seq`, `total` e `data` |
+| `data_packet` | Cliente | Fragmento da mensagem com `seq`, `total` e `data` (máx. 4 chars) |
 | `ack` | Servidor | Confirmação de recebimento do pacote com `seq` |
 | `message_reconstructed` | Servidor | Mensagem completa reconstruída enviada ao cliente |
+
+## Fragmentação
+
+A mensagem é dividida em pacotes de **no máximo 4 caracteres** de carga útil, independentemente do valor de `--max-msg-size`. O `max_msg_size` é negociado no handshake conforme o protocolo, mas a fragmentação real obedece ao limite de 4 caracteres definido no enunciado.
+
+Exemplo: a mensagem `"Olá, mundo!"` (12 chars) gera 3 pacotes:
+- seq=0 → `"Olá,"`
+- seq=1 → `" mun"`
+- seq=2 → `"do!"`
+
+## Diferença entre GBN e SR
+
+| Aspecto | Go-Back-N (GBN) | Repetição Seletiva (SR) |
+|---------|-----------------|------------------------|
+| ACK | Cumulativo | Individual por pacote |
+| Timeout | Reenvia todos desde o perdido | Reenvia apenas o perdido |
+| Fora de ordem | Descarta e reenvia ACK do último válido | Armazena em buffer |
 
 ## Validações no servidor
 
@@ -101,4 +119,4 @@ Se algo for inválido, o servidor responde com `status: error` e `window_size: 0
 
 - Host e porta estão definidos no código (`127.0.0.1` e `5001`). Para testar em outra máquina, altere `HOST` em `client.py` e `server.py` de forma consistente.
 - O cliente deve ser executado **após** o servidor estar em execução; caso contrário, a conexão falhará.
-- O canal de comunicação simulado é perfeito — sem erros ou perdas de pacotes. O mecanismo de retransmissão por timeout está presente no cliente mas não será acionado neste cenário.
+- O canal de comunicação simulado é perfeito — sem erros ou perdas de pacotes. O mecanismo de retransmissão por timeout está presente mas não será acionado neste cenário.
