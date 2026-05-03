@@ -10,13 +10,10 @@ INITIAL_WINDOW_SIZE = 5
 def validate_handshake(data: dict):
     if data.get("type") != "handshake_init":
         return False, "Tipo de mensagem inválido"
-
     if data.get("mode") not in ["GBN", "SR"]:
         return False, "Modo de operação inválido"
-
     if data.get("max_msg_size", 0) < 30:
         return False, "O tamanho máximo deve ser no mínimo 30"
-
     return True, "Handshake realizado com sucesso"
 
 
@@ -81,7 +78,7 @@ def main():
 
                 seq = packet.get("seq")
                 total = packet.get("total")
-                data = packet.get("data", "")
+                data_payload = packet.get("data", "")
                 if not isinstance(seq, int) or not isinstance(total, int):
                     print("Pacote inválido recebido; ignorando.")
                     continue
@@ -90,27 +87,28 @@ def main():
 
                 if mode == "GBN":
                     if seq == expected_seq:
-                        fragments[seq] = data
+                        fragments[seq] = data_payload
                         expected_seq += 1
-                        print(f"[GBN] Pacote em ordem seq={seq} recebido.")
+                        print(f"[GBN RECEBIDO] seq={seq} | payload='{data_payload}' | tamanho={len(data_payload)} chars | esperado_proximo={expected_seq}")
                     else:
-                        print(f"[GBN] Pacote fora de ordem seq={seq} descartado.")
+                        print(f"[GBN DESCARTADO] seq={seq} | payload='{data_payload}' | esperado={expected_seq}")
 
                     ack_seq = expected_seq - 1
                     ack = create_ack(ack_seq)
                     send_message(conn, ack)
-                    print(f"[GBN] ACK cumulativo enviado seq={ack_seq}.")
+                    print(f"[GBN ACK ENVIADO] seq={ack_seq} | tipo=cumulativo")
                 else:
-                    fragments[seq] = data
+                    fragments[seq] = data_payload
                     ack = create_ack(seq)
                     send_message(conn, ack)
-                    print(f"[SR] Pacote seq={seq} recebido e ACK individual enviado.")
+                    print(f"[SR RECEBIDO] seq={seq} | payload='{data_payload}' | tamanho={len(data_payload)} chars")
+                    print(f"[SR ACK ENVIADO] seq={seq} | tipo=individual")
 
                 if total_expected is not None and len(fragments) == total_expected:
                     message = "".join(fragments[i] for i in range(total_expected))
                     final_response = create_message_reconstructed(message)
                     send_message(conn, final_response)
-                    print("Mensagem reconstruída e enviada ao cliente.")
+                    print(f"[RECONSTRUÇÃO] Mensagem completa: '{message}' | total_pacotes={total_expected}")
                     break
 
 

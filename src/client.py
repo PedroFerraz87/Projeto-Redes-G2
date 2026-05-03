@@ -5,6 +5,7 @@ from utils import send_message, receive_message
 
 HOST = "127.0.0.1"
 PORT = 5001
+MAX_PAYLOAD_SIZE = 4  # limite de 4 caracteres por pacote
 
 
 def parse_args():
@@ -38,8 +39,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def fragment_message(message: str, max_msg_size: int):
-    return [message[i:i + max_msg_size] for i in range(0, len(message), max_msg_size)]
+def fragment_message(message: str):
+    return [message[i:i + MAX_PAYLOAD_SIZE] for i in range(0, len(message), MAX_PAYLOAD_SIZE)]
 
 
 def send_with_window(sock, fragments, window_size: int, mode: str):
@@ -53,7 +54,7 @@ def send_with_window(sock, fragments, window_size: int, mode: str):
         while next_seq < total and next_seq < base + window_size:
             packet = create_data_packet(next_seq, total, fragments[next_seq])
             send_message(sock, packet)
-            print(f"Pacote enviado seq={next_seq}")
+            print(f"[ENVIADO] seq={next_seq} | payload='{fragments[next_seq]}' | tamanho={len(fragments[next_seq])} chars | janela=[{base}, {min(base + window_size - 1, total - 1)}]")
             next_seq += 1
 
         try:
@@ -69,7 +70,7 @@ def send_with_window(sock, fragments, window_size: int, mode: str):
             if not isinstance(ack_seq, int):
                 continue
 
-            print(f"ACK recebido seq={ack_seq}")
+            print(f"[ACK RECEBIDO] seq={ack_seq} | modo={mode} | base_atual={base}")
 
             if mode == "GBN":
                 if ack_seq >= base:
@@ -80,17 +81,17 @@ def send_with_window(sock, fragments, window_size: int, mode: str):
                     base += 1
         except socket.timeout:
             if mode == "GBN":
-                print("Timeout (GBN): reenviando todos os pacotes da janela.")
+                print(f"[TIMEOUT GBN] Reenviando todos os pacotes da janela a partir de seq={base}")
                 next_seq = base
             else:
-                print("Timeout (SR): reenviando apenas pacotes sem ACK na janela.")
+                print(f"[TIMEOUT SR] Reenviando apenas pacotes sem ACK na janela.")
                 window_end = min(base + window_size, total)
                 for seq in range(base, window_end):
                     if seq in acked:
                         continue
                     packet = create_data_packet(seq, total, fragments[seq])
                     send_message(sock, packet)
-                    print(f"Reenvio SR seq={seq}")
+                    print(f"[REENVIO SR] seq={seq} | payload='{fragments[seq]}'")
     sock.settimeout(None)
 
 
@@ -109,7 +110,6 @@ def main():
         print("Conexão estabelecida com sucesso.")
 
         handshake_message = create_handshake_init(mode, max_msg_size)
-
         print("Enviando handshake:")
         print(handshake_message)
 
@@ -126,8 +126,8 @@ def main():
             return
 
         window_size = response.get("window_size", 1)
-        fragments = fragment_message(message, max_msg_size)
-        print(f"Mensagem fragmentada em {len(fragments)} pacote(s).")
+        fragments = fragment_message(message)
+        print(f"Mensagem fragmentada em {len(fragments)} pacote(s) de até {MAX_PAYLOAD_SIZE} caracteres cada.")
 
         send_with_window(client_socket, fragments, window_size, mode)
 
